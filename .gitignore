@@ -1,0 +1,22 @@
+﻿# Secrets et identifiants
+identifiants*.txt
+*identifiants*.txt
+
+# Fichiers d'environnement
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Bases de données locales
+*.db
+*.sqlite
+*.sqlite3
+
+# Environnements virtuels
+.venv/
+venv/
+env/
