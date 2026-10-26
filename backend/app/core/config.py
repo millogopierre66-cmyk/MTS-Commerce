@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +9,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
 
     DATABASE_URL: str = "sqlite:///./mts_commerce.db"
+    ADMIN_INITIAL_PASSWORD: SecretStr | None = None
 
     SECRET_KEY: str = "mts-commerce-super-secret-key-change-this"
     ALGORITHM: str = "HS256"

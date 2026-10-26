@@ -13,6 +13,7 @@ from app.models.sale_item import SaleItem
 from app.models.customer import Customer
 from app.models.expense import Expense
 from app.models.audit_log import AuditLog
+from app.models.issued_invoice_number import IssuedInvoiceNumber
 
 
 # ==========================================================

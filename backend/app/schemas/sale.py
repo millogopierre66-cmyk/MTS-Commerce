@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SaleItemCreate(BaseModel):
@@ -20,17 +20,19 @@ class SaleItemResponse(BaseModel):
     unit_price: float
     subtotal: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SaleResponse(BaseModel):
     id: int
     invoice_number: str
     customer_id: int | None
+    user_id: int
     total: float
+    status: str
+    cancelled_at: datetime | None = None
+    cancelled_by: int | None = None
     created_at: datetime
     items: list[SaleItemResponse]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

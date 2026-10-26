@@ -14,12 +14,16 @@ class AuditLogRepository:
     @staticmethod
     def create(
         db: Session,
-        audit_log: AuditLog
+        audit_log: AuditLog,
+        commit: bool = True,
     ) -> AuditLog:
 
         db.add(audit_log)
-        db.commit()
-        db.refresh(audit_log)
+        db.flush()
+
+        if commit:
+            db.commit()
+            db.refresh(audit_log)
 
         return audit_log
 

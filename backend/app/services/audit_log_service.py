@@ -22,7 +22,8 @@ class AuditLogService:
         entity_type: str | None = None,
         entity_id: int | None = None,
         description: str | None = None,
-        ip_address: str | None = None
+        ip_address: str | None = None,
+        commit: bool = True,
     ) -> AuditLog:
 
         audit_log = AuditLog(
@@ -37,7 +38,8 @@ class AuditLogService:
 
         return AuditLogRepository.create(
             db,
-            audit_log
+            audit_log,
+            commit=commit,
         )
 
     # ==========================================================

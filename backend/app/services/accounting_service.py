@@ -26,6 +26,7 @@ class AccountingService:
         cost_of_goods = AccountingRepository.get_cost_of_goods_sold(db)
         stock_value = AccountingRepository.get_stock_value(db)
         stock_quantity = AccountingRepository.get_total_stock_quantity(db)
+        cost_coverage = AccountingRepository.get_historical_cost_coverage(db)
 
         return {
             "revenue": float(revenue or 0),
@@ -34,6 +35,7 @@ class AccountingService:
             "cost_of_goods": float(cost_of_goods or 0),
             "stock_value": float(stock_value or 0),
             "stock_quantity": float(stock_quantity or 0),
+            "historical_cost_coverage": cost_coverage,
         }
 
     # ==========================================================
@@ -67,9 +69,11 @@ class AccountingService:
     @staticmethod
     def get_cost_of_goods(db: Session):
         cost = AccountingRepository.get_cost_of_goods_sold(db)
+        cost_coverage = AccountingRepository.get_historical_cost_coverage(db)
 
         return {
-            "cost_of_goods": float(cost or 0)
+            "cost_of_goods": float(cost or 0),
+            "historical_cost_coverage": cost_coverage,
         }
 
     # ==========================================================
@@ -79,9 +83,11 @@ class AccountingService:
     @staticmethod
     def get_gross_margin(db: Session):
         margin = AccountingRepository.get_gross_margin(db)
+        cost_coverage = AccountingRepository.get_historical_cost_coverage(db)
 
         return {
-            "gross_margin": float(margin or 0)
+            "gross_margin": float(margin or 0),
+            "historical_cost_coverage": cost_coverage,
         }
 
     # ==========================================================
@@ -155,16 +161,23 @@ class AccountingService:
             AccountingRepository.get_gross_margin(db) or 0
         )
 
-        if revenue > 0:
+        cost_coverage = AccountingRepository.get_historical_cost_coverage(db)
+
+        if cost_coverage["complete"] and revenue > 0:
             margin_rate = (margin / revenue) * 100
         else:
-            margin_rate = 0.0
+            margin_rate = None
 
         return {
             "revenue": revenue,
             "cost_of_goods": cost,
             "gross_margin": margin,
-            "gross_margin_rate": round(margin_rate, 2)
+            "gross_margin_rate": (
+                round(margin_rate, 2)
+                if margin_rate is not None
+                else None
+            ),
+            "historical_cost_coverage": cost_coverage,
         }
 
     # ==========================================================
@@ -244,10 +257,12 @@ class AccountingService:
             AccountingRepository.get_gross_margin(db) or 0
         )
 
-        if revenue > 0:
+        cost_coverage = AccountingRepository.get_historical_cost_coverage(db)
+
+        if cost_coverage["complete"] and revenue > 0:
             margin_rate = (gross_margin / revenue) * 100
         else:
-            margin_rate = 0.0
+            margin_rate = None
 
         stock_value = float(
             AccountingRepository.get_stock_value(db) or 0
@@ -273,7 +288,12 @@ class AccountingService:
             "sales_count": sales_count,
             "cost_of_goods": cost_of_goods,
             "gross_margin": gross_margin,
-            "margin_rate": round(margin_rate, 2),
+            "margin_rate": (
+                round(margin_rate, 2)
+                if margin_rate is not None
+                else None
+            ),
+            "historical_cost_coverage": cost_coverage,
             "stock_value": stock_value,
             "stock_quantity": stock_quantity,
             "daily_revenue": daily_revenue,
@@ -307,14 +327,16 @@ class AccountingService:
             AccountingRepository.get_gross_margin(db) or 0
         )
 
+        cost_coverage = AccountingRepository.get_historical_cost_coverage(db)
+
         # ------------------------------------------------------
         # TAUX DE MARGE
         # ------------------------------------------------------
 
-        if revenue > 0:
+        if cost_coverage["complete"] and revenue > 0:
             margin_rate = (gross_margin / revenue) * 100
         else:
-            margin_rate = 0.0
+            margin_rate = None
 
         # ------------------------------------------------------
         # STOCK
@@ -374,24 +396,31 @@ class AccountingService:
                 "l'évolution du chiffre d'affaires."
             )
 
-        # Analyse de la marge
-        if margin_rate < 10:
+        # La marge ne doit pas etre interpretee si les couts sont incomplets.
+        if not cost_coverage["complete"]:
             recommendations.append(
-                "La marge est faible. "
-                "Il est recommandé de revoir les prix de vente "
-                "et les coûts d'approvisionnement."
+                "Marge non definitive : les couts historiques sont incomplets. "
+                "Completer les couts historiques avant d'interpreter la rentabilite."
+            )
+        elif margin_rate is None:
+            recommendations.append(
+                "Le taux de marge ne peut pas etre calcule car le chiffre "
+                "d'affaires est nul."
+            )
+        elif margin_rate < 10:
+            recommendations.append(
+                "La marge est faible. Il est recommande de revoir les prix "
+                "de vente et les couts d'approvisionnement."
             )
         elif margin_rate < 30:
             recommendations.append(
-                "La marge est modérée. "
-                "Une optimisation des coûts d'achat "
-                "pourrait améliorer la rentabilité."
+                "La marge est moderee. Une optimisation des couts d'achat "
+                "pourrait ameliorer la rentabilite."
             )
         else:
             recommendations.append(
-                "La marge est satisfaisante. "
-                "Il est recommandé de maintenir la politique "
-                "commerciale actuelle."
+                "La marge est satisfaisante. Il est recommande de maintenir "
+                "la politique commerciale actuelle."
             )
 
         # Analyse du stock
@@ -407,15 +436,21 @@ class AccountingService:
                 "Un réapprovisionnement est recommandé."
             )
 
-        # Analyse des produits rentables
+        # Signaler lorsque les donnees disponibles ne permettent
+        # pas de classer tous les produits de facon fiable.
         if top_products:
             recommendations.append(
-                "Les produits les plus rentables doivent être "
-                "priorisés dans la stratégie commerciale."
+                "Le classement des produits rentables ne contient que les "
+                "produits dont les couts historiques sont complets."
+            )
+        elif not cost_coverage["complete"]:
+            recommendations.append(
+                "Aucun produit ne peut etre classe de facon fiable tant que "
+                "des couts historiques restent manquants."
             )
         else:
             recommendations.append(
-                "Aucun produit rentable n'a encore été identifié."
+                "Aucun produit rentable n'a encore ete identifie."
             )
 
         # ------------------------------------------------------
@@ -427,7 +462,12 @@ class AccountingService:
             "sales_count": sales_count,
             "cost_of_goods": cost_of_goods,
             "gross_margin": gross_margin,
-            "margin_rate": round(margin_rate, 2),
+            "margin_rate": (
+                round(margin_rate, 2)
+                if margin_rate is not None
+                else None
+            ),
+            "historical_cost_coverage": cost_coverage,
             "stock_value": stock_value,
             "stock_quantity": stock_quantity,
             "daily_revenue": daily_revenue,

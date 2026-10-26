@@ -1,235 +1,260 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.constants import STOCK_IN, STOCK_OUT
+from app.models.customer import Customer
 from app.models.sale import Sale
 from app.models.sale_item import SaleItem
 from app.models.stock_movement import StockMovement
-
 from app.repositories.product_repository import ProductRepository
 from app.repositories.sale_repository import SaleRepository
-
+from app.repositories.stock_repository import StockRepository
 from app.schemas.sale import SaleCreate
-from app.core.constants import STOCK_OUT
-from app.core.constants import STOCK_IN, STOCK_OUT
+from app.services.audit_log_service import AuditLogService
+from app.services.invoice_number_service import InvoiceNumberService
 
 
 class SaleService:
 
     @staticmethod
-    def generate_invoice_number(db: Session):
-
-        count = len(SaleRepository.get_all(db)) + 1
-
-        return (
-            f"FAC-"
-            f"{datetime.now():%Y%m%d}-"
-            f"{count:04d}"
-        )
-
-    @staticmethod
     def create_sale(
         db: Session,
-        data: SaleCreate
-    ):
-
+        data: SaleCreate,
+        current_user,
+    ) -> Sale:
+        """
+        Cr?e une vente dans une transaction unique.
+        Le num?ro de facture est r?serv? s?par?ment pour ?viter
+        les collisions entre ventes concurrentes.
+        """
         try:
-            # ======================================================
-            # CREATION DE LA VENTE
-            # ======================================================
-
-            sale = Sale(
-                invoice_number=SaleService.generate_invoice_number(db),
-                customer_id=data.customer_id,
-                total=0
-            )
-
-            # flush uniquement :
-            # la vente n'est PAS encore définitivement enregistrée
-            SaleRepository.create_sale(
-                db,
-                sale
-            )
-
-            total = 0
-
-            # ======================================================
-            # PARCOURS DES PRODUITS
-            # ======================================================
-
-            for item in data.items:
-
-                product = ProductRepository.get_by_id(
-                    db,
-                    item.product_id
-                )
-
-                if not product:
+            if data.customer_id is not None:
+                customer = db.get(Customer, data.customer_id)
+                if customer is None:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"Produit {item.product_id} introuvable."
+                        detail="Client introuvable.",
+                    )
+
+            invoice_number = InvoiceNumberService.reserve_invoice_number()
+
+            sale = Sale(
+                invoice_number=invoice_number,
+                customer_id=data.customer_id,
+                user_id=current_user.id,
+                total=0,
+                status="completed",
+            )
+
+            SaleRepository.create_sale(db, sale)
+
+            total = 0.0
+
+            for item in data.items:
+                product = ProductRepository.get_by_id(
+                    db,
+                    item.product_id,
+                )
+
+                if product is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Produit {item.product_id} introuvable.",
+                    )
+
+                if not product.active:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Le produit {product.name} est inactif.",
                     )
 
                 if product.quantity < item.quantity:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Stock insuffisant pour {product.name}"
+                        detail=f"Stock insuffisant pour {product.name}.",
                     )
 
-                # ==================================================
-                # CALCUL DU SOUS-TOTAL
-                # ==================================================
-
-                subtotal = (
-                    product.selling_price
-                    * item.quantity
+                # Mise ? jour atomique : prot?ge contre un stock
+                # insuffisant si une autre vente intervient en parall?le.
+                stock_updated = StockRepository.decrement_stock_atomic(
+                    db,
+                    product.id,
+                    item.quantity,
                 )
 
+                if not stock_updated:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Le stock de {product.name} a chang?. "
+                            "Actualisez le stock et recommencez."
+                        ),
+                    )
+
+                unit_price = float(product.selling_price)
+                purchase_unit_price = (
+                    float(product.purchase_price)
+                    if product.purchase_price is not None
+                    else None
+                )
+                subtotal = unit_price * item.quantity
                 total += subtotal
-
-                # ==================================================
-                # LIGNE DE VENTE
-                # ==================================================
-
-                sale_item = SaleItem(
-                    sale_id=sale.id,
-                    product_id=product.id,
-                    quantity=item.quantity,
-                    unit_price=product.selling_price,
-                    subtotal=subtotal
-                )
 
                 SaleRepository.add_item(
                     db,
-                    sale_item
+                    SaleItem(
+                        sale_id=sale.id,
+                        product_id=product.id,
+                        quantity=item.quantity,
+                        unit_price=unit_price,
+                        purchase_unit_price=purchase_unit_price,
+                        subtotal=subtotal,
+                    ),
                 )
 
-                # ==================================================
-                # MISE A JOUR DU STOCK
-                # ==================================================
-
-                product.quantity -= item.quantity
-
-                # ==================================================
-                # HISTORIQUE DU MOUVEMENT
-                # ==================================================
-
-                movement = StockMovement(
-                    product_id=product.id,
-                    movement_type=STOCK_OUT,
-                    quantity=item.quantity,
-                    description=f"Vente {sale.invoice_number}"
+                StockRepository.create_movement(
+                    db,
+                    StockMovement(
+                        product_id=product.id,
+                        user_id=current_user.id,
+                        movement_type=STOCK_OUT,
+                        quantity=item.quantity,
+                        description=f"Vente {sale.invoice_number}",
+                    ),
                 )
-
-                db.add(movement)
-
-            # ======================================================
-            # TOTAL DE LA VENTE
-            # ======================================================
 
             sale.total = total
 
-            # ======================================================
-            # VALIDATION DE LA TRANSACTION
-            # ======================================================
-
-            SaleRepository.commit(db)
-
-            SaleRepository.refresh(
+            # Le journal est ajout? ? la m?me transaction :
+            # aucun commit n'est effectu? ? l'int?rieur du service d'audit.
+            AuditLogService.log(
                 db,
-                sale
+                action="SALE_CREATED",
+                user_id=current_user.id,
+                username=getattr(current_user, "username", None),
+                entity_type="Sale",
+                entity_id=sale.id,
+                description=(
+                    f"Cr?ation de la vente {sale.invoice_number}."
+                ),
+                commit=False,
             )
 
+            db.commit()
+            db.refresh(sale)
             return sale
 
         except HTTPException:
-            # Annule toutes les modifications de cette transaction
             db.rollback()
             raise
 
         except Exception:
-            # Annule également toute modification en cas
-            # d'erreur inattendue
             db.rollback()
             raise
-    
+
     @staticmethod
-    def delete_sale(
+    def cancel_sale(
         db: Session,
-        sale_id: int
-    ):
-
+        sale_id: int,
+        current_user,
+    ) -> dict:
+        """
+        Annule une vente sans la supprimer.
+        Le changement conditionnel de statut emp?che la restauration
+        r?p?t?e du stock en cas de demandes concurrentes.
+        """
         try:
-            # ==================================================
-            # RECUPERATION DE LA VENTE
-            # ==================================================
+            sale = SaleRepository.get_by_id(db, sale_id)
 
-            sale = SaleRepository.get_by_id(
-                db,
-                sale_id
-            )
-
-            if not sale:
+            if sale is None:
                 raise HTTPException(
                     status_code=404,
-                    detail="Vente introuvable."
+                    detail="Vente introuvable.",
                 )
 
-            # ==================================================
-            # RESTAURATION DU STOCK
-            # ==================================================
+            if sale.status != "completed":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cette vente est d?j? annul?e ou n'est plus annulable.",
+                )
+
+            cancelled_at = datetime.now(UTC).replace(tzinfo=None)
+
+            # Cette modification conditionnelle doit pr?c?der
+            # toute restauration du stock.
+            cancelled = SaleRepository.cancel_if_completed(
+                db,
+                sale_id=sale.id,
+                cancelled_at=cancelled_at,
+                cancelled_by=current_user.id,
+            )
+
+            if not cancelled:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "La vente a d?j? ?t? annul?e par une autre op?ration."
+                    ),
+                )
+
+            # Synchroniser aussi l'objet ORM d?j? charg?.
+            sale.status = "cancelled"
+            sale.cancelled_at = cancelled_at
+            sale.cancelled_by = current_user.id
 
             for item in sale.items:
-
-                product = ProductRepository.get_by_id(
+                stock_updated = StockRepository.increment_stock_atomic(
                     db,
-                    item.product_id
+                    item.product_id,
+                    item.quantity,
                 )
 
-                if not product:
+                if not stock_updated:
                     raise HTTPException(
                         status_code=404,
                         detail=(
-                            f"Produit {item.product_id} "
-                            "introuvable lors de l'annulation."
-                        )
+                            f"Produit {item.product_id} introuvable "
+                            "lors de la restauration du stock."
+                        ),
                     )
 
-                # Restaurer la quantite vendue
-                product.quantity += item.quantity
-
-                # Historique de l'annulation
-                movement = StockMovement(
-                    product_id=product.id,
-                    movement_type=STOCK_IN,
-                    quantity=item.quantity,
-                    description=(
-                        f"Annulation vente "
-                        f"{sale.invoice_number}"
-                    )
+                StockRepository.create_movement(
+                    db,
+                    StockMovement(
+                        product_id=item.product_id,
+                        user_id=current_user.id,
+                        movement_type=STOCK_IN,
+                        quantity=item.quantity,
+                        description=(
+                            f"Annulation vente {sale.invoice_number}"
+                        ),
+                    ),
                 )
 
-                db.add(movement)
+            AuditLogService.log(
+                db,
+                action="SALE_CANCELLED",
+                user_id=current_user.id,
+                username=getattr(current_user, "username", None),
+                entity_type="Sale",
+                entity_id=sale.id,
+                description=(
+                    f"Annulation de la vente {sale.invoice_number}."
+                ),
+                commit=False,
+            )
 
-            # ==================================================
-            # SUPPRESSION DE LA VENTE
-            # Les SaleItem sont supprimes grace au cascade
-            # ==================================================
-
-            db.delete(sale)
-
-            # ==================================================
-            # VALIDATION DE LA TRANSACTION
-            # ==================================================
-
+            # Vente, statut, mouvements, stock et audit sont valid?s ensemble.
             db.commit()
 
             return {
-                "message": (
-                    "Vente annulee avec succes. "
-                    "Le stock a ete restaure."
-                )
+                "sale_id": sale.id,
+                "invoice_number": sale.invoice_number,
+                "status": sale.status,
+                "cancelled_by": sale.cancelled_by,
+                "message": "Vente annul?e ; le stock a ?t? restaur?.",
             }
 
         except HTTPException:

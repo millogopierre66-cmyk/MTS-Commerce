@@ -60,6 +60,14 @@ class ProfitResponse(BaseModel):
 # TABLEAU DE BORD COMPTABLE
 # ==========================================================
 
+class HistoricalCostCoverageResponse(BaseModel):
+    total_sale_items: int
+    known_historical_costs: int
+    missing_historical_costs: int
+    coverage_percent: float
+    complete: bool
+
+
 class DashboardResponse(BaseModel):
     revenue: float
     sales_count: int
@@ -67,6 +75,7 @@ class DashboardResponse(BaseModel):
     cost_of_goods: float
     stock_value: float
     stock_quantity: float
+    historical_cost_coverage: HistoricalCostCoverageResponse
 
 
 # ==========================================================
@@ -87,7 +96,7 @@ class TopProductResponse(BaseModel):
     product_name: str
     quantity_sold: float
     revenue: float
-    profit: float
+    profit: float | None
 
 
 # ==========================================================
@@ -114,10 +123,11 @@ class FinancialAnalysisResponse(BaseModel):
     sales_count: int
     cost_of_goods: float
     gross_margin: float
-    margin_rate: float
+    margin_rate: float | None
 
     stock_value: float
     stock_quantity: float
+    historical_cost_coverage: HistoricalCostCoverageResponse
 
     daily_revenue: List[DailyRevenueResponse]
     top_products: List[TopProductResponse]
@@ -132,10 +142,11 @@ class DecisionAnalysisResponse(BaseModel):
     sales_count: int
     cost_of_goods: float
     gross_margin: float
-    margin_rate: float
+    margin_rate: float | None
 
     stock_value: float
     stock_quantity: float
+    historical_cost_coverage: HistoricalCostCoverageResponse
 
     daily_revenue: List[DailyRevenueResponse]
     top_products: List[TopProductResponse]

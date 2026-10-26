@@ -1,3 +1,4 @@
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models.stock_movement import StockMovement
@@ -171,3 +172,60 @@ class StockRepository:
             )
 
         return total
+
+
+    @staticmethod
+    def create_movement(db: Session, movement: StockMovement):
+        """Ajoute un mouvement sans valider la transaction en cours."""
+        db.add(movement)
+        db.flush()
+        return movement
+
+    @staticmethod
+    def decrement_stock_atomic(
+        db: Session,
+        product_id: int,
+        quantity: int
+    ) -> bool:
+        """D?cr?mente uniquement si le stock disponible est suffisant."""
+        result = db.execute(
+            update(Product)
+            .where(
+                Product.id == product_id,
+                Product.quantity >= quantity
+            )
+            .values(quantity=Product.quantity - quantity)
+        )
+        return result.rowcount == 1
+
+    @staticmethod
+    def increment_stock_atomic(
+        db: Session,
+        product_id: int,
+        quantity: int
+    ) -> bool:
+        """Incr?mente le stock du produit si celui-ci existe."""
+        result = db.execute(
+            update(Product)
+            .where(Product.id == product_id)
+            .values(quantity=Product.quantity + quantity)
+        )
+        return result.rowcount == 1
+
+    @staticmethod
+    def adjust_stock_atomic(
+        db: Session,
+        product_id: int,
+        expected_quantity: int,
+        new_quantity: int
+    ) -> bool:
+        """Ajuste le stock seulement si sa valeur n'a pas chang?."""
+        result = db.execute(
+            update(Product)
+            .where(
+                Product.id == product_id,
+                Product.quantity == expected_quantity
+            )
+            .values(quantity=new_quantity)
+        )
+        return result.rowcount == 1

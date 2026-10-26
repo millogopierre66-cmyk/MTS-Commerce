@@ -24,6 +24,7 @@ class AccountingRepository:
                     0
                 )
             )
+            .filter(Sale.status == "completed")
             .scalar()
         )
 
@@ -40,6 +41,7 @@ class AccountingRepository:
             db.query(
                 func.count(Sale.id)
             )
+            .filter(Sale.status == "completed")
             .scalar()
         )
 
@@ -78,6 +80,7 @@ class AccountingRepository:
                 )
             )
             .filter(
+                Sale.status == "completed",
                 Sale.created_at >= start_date,
                 Sale.created_at <= end_date
             )
@@ -102,6 +105,7 @@ class AccountingRepository:
                 func.count(Sale.id)
             )
             .filter(
+                Sale.status == "completed",
                 Sale.created_at >= start_date,
                 Sale.created_at <= end_date
             )
@@ -133,6 +137,8 @@ class AccountingRepository:
                 ).label("revenue")
             )
         )
+
+        query = query.filter(Sale.status == "completed")
 
         if start_date is not None:
             query = query.filter(
@@ -174,52 +180,53 @@ class AccountingRepository:
     ):
 
         profit_expression = (
-            SaleItem.quantity
-            * (
-                Product.selling_price
-                - Product.purchase_price
+            SaleItem.subtotal
+            - (
+                SaleItem.quantity
+                * SaleItem.purchase_unit_price
             )
         )
 
         rows = (
             db.query(
                 Product.id.label("product_id"),
-
                 Product.name.label("product_name"),
 
                 func.coalesce(
-                    func.sum(
-                        SaleItem.quantity
-                    ),
+                    func.sum(SaleItem.quantity),
                     0
                 ).label("quantity_sold"),
 
                 func.coalesce(
-                    func.sum(
-                        SaleItem.subtotal
-                    ),
+                    func.sum(SaleItem.subtotal),
                     0
                 ).label("revenue"),
 
+                func.count(
+                    SaleItem.id
+                ).label("total_sale_lines"),
+
+                func.count(
+                    SaleItem.purchase_unit_price
+                ).label("known_cost_lines"),
+
                 func.coalesce(
-                    func.sum(
-                        profit_expression
-                    ),
+                    func.sum(profit_expression),
                     0
-                ).label("profit")
+                ).label("profit_on_known_cost_lines")
             )
             .join(
                 SaleItem,
                 SaleItem.product_id == Product.id
             )
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(Sale.status == "completed")
             .group_by(
                 Product.id,
                 Product.name
             )
             .order_by(
-                func.sum(
-                    SaleItem.quantity
-                ).desc()
+                func.sum(SaleItem.quantity).desc()
             )
             .limit(limit)
             .all()
@@ -229,18 +236,20 @@ class AccountingRepository:
             {
                 "product_id": row.product_id,
                 "product_name": row.product_name,
-                "quantity_sold": float(
-                    row.quantity_sold or 0
-                ),
-                "revenue": float(
-                    row.revenue or 0
-                ),
-                "profit": float(
-                    row.profit or 0
+                "quantity_sold": float(row.quantity_sold or 0),
+                "revenue": float(row.revenue or 0),
+
+                # Ne pas pr?senter un b?n?fice partiel comme complet.
+                "profit": (
+                    None
+                    if int(row.known_cost_lines or 0)
+                    < int(row.total_sale_lines or 0)
+                    else float(row.profit_on_known_cost_lines or 0)
                 )
             }
             for row in rows
         ]
+
     # ==========================================================
     # PRODUITS LES PLUS RENTABLES
     # ==========================================================
@@ -252,62 +261,51 @@ class AccountingRepository:
     ):
 
         profit_expression = (
-            SaleItem.quantity
-            * (
-                Product.selling_price
-                - Product.purchase_price
+            SaleItem.subtotal
+            - (
+                SaleItem.quantity
+                * SaleItem.purchase_unit_price
             )
         )
 
         rows = (
             db.query(
-                Product.id.label(
-                    "product_id"
-                ),
-
-                Product.name.label(
-                    "product_name"
-                ),
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
 
                 func.coalesce(
-                    func.sum(
-                        SaleItem.quantity
-                    ),
+                    func.sum(SaleItem.quantity),
                     0
-                ).label(
-                    "quantity_sold"
-                ),
+                ).label("quantity_sold"),
 
                 func.coalesce(
-                    func.sum(
-                        SaleItem.subtotal
-                    ),
+                    func.sum(SaleItem.subtotal),
                     0
-                ).label(
-                    "revenue"
-                ),
+                ).label("revenue"),
 
-                func.coalesce(
-                    func.sum(
-                        profit_expression
-                    ),
-                    0
-                ).label(
-                    "profit"
-                )
+                func.sum(
+                    profit_expression
+                ).label("profit")
             )
             .join(
                 SaleItem,
                 SaleItem.product_id == Product.id
             )
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(Sale.status == "completed")
             .group_by(
                 Product.id,
                 Product.name
             )
+
+            # Toutes les lignes doivent avoir un co?t historique.
+            .having(
+                func.count(SaleItem.purchase_unit_price)
+                == func.count(SaleItem.id)
+            )
+
             .order_by(
-                func.sum(
-                    profit_expression
-                ).desc()
+                func.sum(profit_expression).desc()
             )
             .limit(limit)
             .all()
@@ -317,15 +315,9 @@ class AccountingRepository:
             {
                 "product_id": row.product_id,
                 "product_name": row.product_name,
-                "quantity_sold": float(
-                    row.quantity_sold or 0
-                ),
-                "revenue": float(
-                    row.revenue or 0
-                ),
-                "profit": float(
-                    row.profit or 0
-                )
+                "quantity_sold": float(row.quantity_sold or 0),
+                "revenue": float(row.revenue or 0),
+                "profit": float(row.profit or 0)
             }
             for row in rows
         ]
@@ -360,7 +352,9 @@ class AccountingRepository:
                     "revenue"
                 )
             )
+            .join(Sale, Sale.id == SaleItem.sale_id)
             .filter(
+                Sale.status == "completed",
                 SaleItem.product_id == product_id
             )
             .first()
@@ -370,11 +364,11 @@ class AccountingRepository:
     # MARGE BRUTE
     # ==========================================================
 
-    @staticmethod
-    def get_gross_margin(
-        db: Session
-    ) -> float:
 
+    @staticmethod
+    def get_gross_margin(db: Session) -> float:
+        # La marge historique n'est calcul?e que lorsque le prix d'achat
+        # au moment de la vente est connu.
         result = (
             db.query(
                 func.coalesce(
@@ -382,49 +376,84 @@ class AccountingRepository:
                         SaleItem.subtotal
                         - (
                             SaleItem.quantity
-                            * Product.purchase_price
+                            * SaleItem.purchase_unit_price
                         )
                     ),
-                    0
+                    0,
                 )
             )
-            .join(
-                Product,
-                Product.id == SaleItem.product_id
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(
+                Sale.status == "completed",
+                SaleItem.purchase_unit_price.is_not(None),
             )
             .scalar()
         )
 
         return float(result or 0)
-
     # ==========================================================
     # COÛT DES MARCHANDISES VENDUES
     # ==========================================================
 
-    @staticmethod
-    def get_cost_of_goods_sold(
-        db: Session
-    ) -> float:
 
+    @staticmethod
+    def get_cost_of_goods_sold(db: Session) -> float:
+        # Ne pas inventer de co?t pour les anciennes lignes dont le co?t
+        # historique est inconnu.
         result = (
             db.query(
                 func.coalesce(
                     func.sum(
                         SaleItem.quantity
-                        * Product.purchase_price
+                        * SaleItem.purchase_unit_price
                     ),
-                    0
+                    0,
                 )
             )
-            .join(
-                Product,
-                Product.id == SaleItem.product_id
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(
+                Sale.status == "completed",
+                SaleItem.purchase_unit_price.is_not(None),
             )
             .scalar()
         )
 
         return float(result or 0)
 
+    @staticmethod
+    def get_historical_cost_coverage(db: Session) -> dict:
+        # La couverture concerne uniquement les lignes des ventes termin?es.
+        total = (
+            db.query(func.count(SaleItem.id))
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(Sale.status == "completed")
+            .scalar()
+            or 0
+        )
+
+        known = (
+            db.query(func.count(SaleItem.id))
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(
+                Sale.status == "completed",
+                SaleItem.purchase_unit_price.is_not(None),
+            )
+            .scalar()
+            or 0
+        )
+
+        total = int(total)
+        known = int(known)
+        missing = total - known
+        coverage_percent = round(known * 100 / total, 2) if total else 0.0
+
+        return {
+            "total_sale_items": total,
+            "known_historical_costs": known,
+            "missing_historical_costs": missing,
+            "coverage_percent": coverage_percent,
+            "complete": total > 0 and missing == 0,
+        }
     # ==========================================================
     # VALEUR DU STOCK
     # ==========================================================
