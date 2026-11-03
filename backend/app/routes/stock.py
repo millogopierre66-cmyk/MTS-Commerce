@@ -14,12 +14,13 @@ from app.services.stock_service import StockService
 
 from app.security.auth import (
     get_current_user,
-    require_roles
+    require_roles,
 )
+
 
 router = APIRouter(
     prefix="/stock",
-    tags=["Stock"]
+    tags=["Stock"],
 )
 
 
@@ -33,61 +34,63 @@ def get_db():
 
 @router.post(
     "/in",
-    response_model=StockResponse
+    response_model=StockResponse,
 )
 def stock_in(
     data: StockIn,
     db: Session = Depends(get_db),
-    current_user=Depends(
-        require_roles("admin", "manager")
-    )
+    current_user=Depends(require_roles("admin", "manager")),
 ):
     return StockService.stock_in(
         db,
-        data
+        data,
+        current_user=current_user,
     )
-    
+
+
 @router.post(
     "/out",
-    response_model=StockResponse
+    response_model=StockResponse,
 )
 def stock_out(
     data: StockOut,
     db: Session = Depends(get_db),
-    current_user=Depends(
-        require_roles("admin", "manager")
-    )
+    current_user=Depends(require_roles("admin", "manager")),
 ):
-    return StockService.stock_out(db, data)
+    return StockService.stock_out(
+        db,
+        data,
+        current_user=current_user,
+    )
 
 
 @router.post(
     "/adjust",
-    response_model=StockResponse
+    response_model=StockResponse,
 )
 def adjust_stock(
     data: StockAdjust,
     db: Session = Depends(get_db),
-    current_user=Depends(
-    require_roles("admin", "manager")
-    )
+    current_user=Depends(require_roles("admin", "manager")),
 ):
     return StockService.adjust_stock(
-    db,
-    data.product_id,
-    data.quantity,
-    data.description
+        db=db,
+        product_id=data.product_id,
+        quantity=data.quantity,
+        description=data.description,
+        current_user=current_user,
     )
+
 
 @router.get("/{product_id}")
 def get_stock(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     return StockService.get_stock(
         db,
-        product_id
+        product_id,
     )
 
 
@@ -95,9 +98,9 @@ def get_stock(
 def history(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     return StockService.get_history(
         db,
-        product_id
+        product_id,
     )

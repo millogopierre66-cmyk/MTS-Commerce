@@ -12,211 +12,202 @@ from app.models.stock_movement import StockMovement
 from app.repositories.product_repository import ProductRepository
 from app.repositories.stock_repository import StockRepository
 
-from app.schemas.stock import (
-    StockIn,
-    StockOut,
-)
+from app.schemas.stock import StockIn, StockOut
 
 
 class StockService:
 
-    # ==========================================================
-    # ENTRÉE DE STOCK
-    # ==========================================================
+    @staticmethod
+    def _get_product(db: Session, product_id: int):
+        product = ProductRepository.get_by_id(db, product_id)
+
+        if product is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Produit introuvable.",
+            )
+
+        return product
 
     @staticmethod
     def stock_in(
         db: Session,
-        data: StockIn
+        data: StockIn,
+        current_user,
     ):
-        product = ProductRepository.get_by_id(
-            db,
-            data.product_id
-        )
-
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Produit introuvable."
-            )
-
         if data.quantity <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La quantité doit être supérieure à zéro."
+                detail="La quantite doit etre superieure a zero.",
             )
 
-        # Mise à jour du stock courant
-        product.quantity += data.quantity
+        StockService._get_product(db, data.product_id)
 
-        # Historique du mouvement
-        movement = StockMovement(
-            product_id=data.product_id,
-            quantity=data.quantity,
-            movement_type=STOCK_IN,
-            description=data.description
-        )
+        try:
+            updated = StockRepository.increment_stock_atomic(
+                db,
+                data.product_id,
+                data.quantity,
+            )
 
-        db.add(movement)
-        db.commit()
-        db.refresh(movement)
+            if not updated:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Produit introuvable pendant l'operation.",
+                )
 
-        return movement
+            movement = StockMovement(
+                product_id=data.product_id,
+                user_id=current_user.id,
+                quantity=data.quantity,
+                movement_type=STOCK_IN,
+                description=data.description,
+            )
 
-    # ==========================================================
-    # SORTIE DE STOCK
-    # ==========================================================
+            StockRepository.create_movement(db, movement)
+            db.commit()
+            db.refresh(movement)
+
+            return movement
+
+        except Exception:
+            db.rollback()
+            raise
 
     @staticmethod
     def stock_out(
         db: Session,
-        data: StockOut
+        data: StockOut,
+        current_user,
     ):
-        product = ProductRepository.get_by_id(
-            db,
-            data.product_id
-        )
-
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Produit introuvable."
-            )
-
         if data.quantity <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La quantité doit être supérieure à zéro."
+                detail="La quantite doit etre superieure a zero.",
             )
 
-        # Le stock courant officiel est Product.quantity
+        product = StockService._get_product(db, data.product_id)
+
         if product.quantity < data.quantity:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Stock insuffisant."
+                detail="Stock insuffisant.",
             )
 
-        # Mise à jour du stock courant
-        product.quantity -= data.quantity
-
-        # Historique du mouvement
-        movement = StockMovement(
-            product_id=data.product_id,
-            quantity=data.quantity,
-            movement_type=STOCK_OUT,
-            description=data.description
-        )
-
-        db.add(movement)
-        db.commit()
-        db.refresh(movement)
-
-        return movement
-
-    # ==========================================================
-    # CONSULTATION DU STOCK
-    # ==========================================================
-
-    @staticmethod
-    def get_stock(
-        db: Session,
-        product_id: int
-    ):
-        product = ProductRepository.get_by_id(
-            db,
-            product_id
-        )
-
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Produit introuvable."
+        try:
+            updated = StockRepository.decrement_stock_atomic(
+                db,
+                data.product_id,
+                data.quantity,
             )
 
-        return {
-            "product": product.name,
-            "reference": product.reference,
-            "stock": product.quantity
-        }
+            if not updated:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Le stock a change pendant l'operation. "
+                        "Veuillez reessayer."
+                    ),
+                )
 
-    # ==========================================================
-    # HISTORIQUE
-    # ==========================================================
-
-    @staticmethod
-    def get_history(
-        db: Session,
-        product_id: int
-    ):
-        product = ProductRepository.get_by_id(
-            db,
-            product_id
-        )
-
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Produit introuvable."
+            movement = StockMovement(
+                product_id=data.product_id,
+                user_id=current_user.id,
+                quantity=data.quantity,
+                movement_type=STOCK_OUT,
+                description=data.description,
             )
 
-        return StockRepository.get_by_product(
-            db,
-            product_id
-        )
+            StockRepository.create_movement(db, movement)
+            db.commit()
+            db.refresh(movement)
 
-    # ==========================================================
-    # AJUSTEMENT DE STOCK
-    # ==========================================================
+            return movement
+
+        except Exception:
+            db.rollback()
+            raise
 
     @staticmethod
     def adjust_stock(
         db: Session,
         product_id: int,
         quantity: int,
-        description: str = "Ajustement de stock"
+        current_user,
+        description: str = "Ajustement de stock",
     ):
-        product = ProductRepository.get_by_id(
-            db,
-            product_id
-        )
-
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Produit introuvable."
-            )
-
         if quantity < 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La quantité ne peut pas être négative."
+                detail="La quantite ne peut pas etre negative.",
             )
+
+        product = StockService._get_product(db, product_id)
 
         old_quantity = product.quantity
-
-        # Variation réelle
         difference = quantity - old_quantity
 
-        # Nouveau stock
-        product.quantity = quantity
-
-        movement = StockMovement(
-            product_id=product_id,
-            quantity=difference,
-            movement_type=STOCK_ADJUSTMENT,
-            description=(
-                f"{description} | "
-                f"Ancien stock: {old_quantity} | "
-                f"Nouveau stock: {quantity} | "
-                f"Variation: {difference:+}"
+        if difference == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La quantite est identique au stock actuel.",
             )
+
+        try:
+            updated = StockRepository.adjust_stock_atomic(
+                db,
+                product_id,
+                old_quantity,
+                quantity,
+            )
+
+            if not updated:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Le stock a change pendant l'ajustement. "
+                        "Veuillez recommencer l'inventaire."
+                    ),
+                )
+
+            movement = StockMovement(
+                product_id=product_id,
+                user_id=current_user.id,
+                quantity=difference,
+                movement_type=STOCK_ADJUSTMENT,
+                description=(
+                    f"{description} | "
+                    f"Ancien stock: {old_quantity} | "
+                    f"Nouveau stock: {quantity} | "
+                    f"Variation: {difference:+}"
+                ),
+            )
+
+            StockRepository.create_movement(db, movement)
+            db.commit()
+            db.refresh(movement)
+
+            return movement
+
+        except Exception:
+            db.rollback()
+            raise
+
+    @staticmethod
+    def get_stock(db: Session, product_id: int):
+        product = StockService._get_product(db, product_id)
+
+        return {
+            "product": product.name,
+            "reference": product.reference,
+            "stock": product.quantity,
+        }
+
+    @staticmethod
+    def get_history(db: Session, product_id: int):
+        StockService._get_product(db, product_id)
+
+        return StockRepository.get_by_product(
+            db,
+            product_id,
         )
-
-        db.add(movement)
-        db.commit()
-        db.refresh(movement)
-
-        return movement
-
-
-    
