@@ -53,6 +53,17 @@ def list_products(
 
 
 @router.get(
+    "/archived",
+    response_model=list[ProductResponse],
+)
+def list_archived_products(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_admin),
+):
+    return ProductService.get_archived(db)
+
+
+@router.get(
     "/{product_id}",
     response_model=ProductResponse,
 )
@@ -61,7 +72,11 @@ def get_product(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return ProductService.get_one(db, product_id)
+    return ProductService.get_one(
+        db,
+        product_id,
+        current_user=current_user,
+    )
 
 
 @router.put(

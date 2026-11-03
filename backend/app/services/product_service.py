@@ -51,13 +51,28 @@ class ProductService:
 
     @staticmethod
     def get_all(db: Session):
-        return ProductRepository.get_all(db)
+        return ProductRepository.get_active(db)
 
     @staticmethod
-    def get_one(db: Session, product_id: int):
+    def get_archived(db: Session):
+        return ProductRepository.get_archived(db)
+
+    @staticmethod
+    def get_one(db: Session, product_id: int, current_user):
         product = ProductRepository.get_by_id(db, product_id)
 
         if product is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Produit introuvable.",
+            )
+
+        # Un produit archive n'est visible individuellement
+        # que par un administrateur.
+        if (
+            not product.active
+            and getattr(current_user, "role", None) != "admin"
+        ):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Produit introuvable.",

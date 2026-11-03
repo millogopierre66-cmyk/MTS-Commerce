@@ -16,7 +16,24 @@ class ProductRepository:
 
     @staticmethod
     def get_all(db: Session):
+        # Tous les produits : conserve pour les statistiques internes.
         return db.query(Product).all()
+
+    @staticmethod
+    def get_active(db: Session):
+        return (
+            db.query(Product)
+            .filter(Product.active.is_(True))
+            .all()
+        )
+
+    @staticmethod
+    def get_archived(db: Session):
+        return (
+            db.query(Product)
+            .filter(Product.active.is_(False))
+            .all()
+        )
 
     @staticmethod
     def get_by_id(db: Session, product_id: int):
