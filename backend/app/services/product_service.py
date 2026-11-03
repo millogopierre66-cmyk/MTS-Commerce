@@ -1,40 +1,36 @@
-from app.models.sale_item import SaleItem
-from app.models.stock_movement import StockMovement
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.repositories.product_repository import ProductRepository
 from app.schemas.product import ProductCreate, ProductUpdate
+from app.services.audit_log_service import AuditLogService
 
 
 class ProductService:
 
     @staticmethod
     def create(db: Session, data: ProductCreate):
-
-        # Vérifier l'unicité de la référence
         existing_reference = ProductRepository.get_by_reference(
             db,
-            data.reference
+            data.reference,
         )
 
         if existing_reference:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cette référence produit existe déjà."
+                detail="Cette reference produit existe deja.",
             )
 
-        # Vérifier l'unicité du code-barres
         existing_barcode = ProductRepository.get_by_barcode(
             db,
-            data.barcode
+            data.barcode,
         )
 
         if existing_barcode:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ce code-barres est déjà utilisé."
+                detail="Ce code-barres est deja utilise.",
             )
 
         product = Product(
@@ -48,30 +44,23 @@ class ProductService:
             quantity=data.quantity,
             alert_stock=data.alert_stock,
             minimum_stock=data.minimum_stock,
-            active=data.active
+            active=data.active,
         )
 
-        return ProductRepository.create(
-            db,
-            product
-        )
-            
+        return ProductRepository.create(db, product)
+
     @staticmethod
     def get_all(db: Session):
         return ProductRepository.get_all(db)
 
     @staticmethod
     def get_one(db: Session, product_id: int):
+        product = ProductRepository.get_by_id(db, product_id)
 
-        product = ProductRepository.get_by_id(
-            db,
-            product_id
-        )
-
-        if not product:
+        if product is None:
             raise HTTPException(
-                status_code=404,
-                detail="Produit introuvable."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Produit introuvable.",
             )
 
         return product
@@ -80,122 +69,100 @@ class ProductService:
     def update(
         db: Session,
         product_id: int,
-        data: ProductUpdate
+        data: ProductUpdate,
     ):
+        product = ProductRepository.get_by_id(db, product_id)
 
-        # Vérifier que le produit existe
-        product = ProductRepository.get_by_id(
-            db,
-            product_id
-        )
-
-        if not product:
+        if product is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Produit introuvable."
+                detail="Produit introuvable.",
             )
 
-        # Vérifier l'unicité de la référence
         if data.reference is not None:
-
-            existing_product = (
-                ProductRepository.get_by_reference(
-                    db,
-                    data.reference
-                )
+            existing_product = ProductRepository.get_by_reference(
+                db,
+                data.reference,
             )
 
             if (
-                existing_product
+                existing_product is not None
                 and existing_product.id != product_id
             ):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cette référence est déjà utilisée."
+                    detail="Cette reference est deja utilisee.",
                 )
 
-        # Vérifier l'unicité du code-barres
         if data.barcode is not None:
-
-            existing_product = (
-                ProductRepository.get_by_barcode(
-                    db,
-                    data.barcode
-                )
+            existing_product = ProductRepository.get_by_barcode(
+                db,
+                data.barcode,
             )
 
             if (
-                existing_product
+                existing_product is not None
                 and existing_product.id != product_id
             ):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Ce code-barres est déjà utilisé."
+                    detail="Ce code-barres est deja utilise.",
                 )
 
-        # Mise à jour
-        return ProductRepository.update(
-            db,
-            product,
-            data
-        )
+        return ProductRepository.update(db, product, data)
+
     @staticmethod
     def delete(
         db: Session,
-        product_id: int
+        product_id: int,
+        current_user,
     ):
+        product = ProductRepository.get_by_id(db, product_id)
 
-        product = ProductRepository.get_by_id(
-            db,
-            product_id
-        )
-
-        if not product:
+        if product is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Produit introuvable."
+                detail="Produit introuvable.",
             )
 
-        # Verifier si le produit est utilise dans des ventes
-        sales_count = (
-            db.query(SaleItem)
-            .filter(SaleItem.product_id == product_id)
-            .count()
-        )
-
-        if sales_count > 0:
+        if not product.active:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Impossible de supprimer ce produit : "
-                    f"{sales_count} vente(s) sont liees a ce produit."
-                )
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ce produit est deja desactive.",
             )
 
-        # Verifier si le produit possede des mouvements de stock
-        movements_count = (
-            db.query(StockMovement)
-            .filter(StockMovement.product_id == product_id)
-            .count()
-        )
-
-        if movements_count > 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Impossible de supprimer ce produit : "
-                    f"{movements_count} mouvement(s) de stock sont lies a ce produit."
-                )
+        try:
+            updated = ProductRepository.deactivate_if_active(
+                db,
+                product_id,
             )
 
-        ProductRepository.delete(
-            db,
-            product
-        )
+            if not updated:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Le produit a deja ete desactive.",
+                )
+
+            AuditLogService.log(
+                db=db,
+                action="PRODUCT_DEACTIVATED",
+                user_id=current_user.id,
+                username=getattr(current_user, "username", None),
+                entity_type="Product",
+                entity_id=product_id,
+                description=f"Desactivation du produit {product.name}.",
+                commit=False,
+            )
+
+            db.commit()
+            db.refresh(product)
+
+        except Exception:
+            db.rollback()
+            raise
 
         return {
-            "message": "Produit supprime avec succes."
+            "message": "Produit desactive avec succes.",
+            "product_id": product_id,
+            "active": product.active,
         }
-
-
-    

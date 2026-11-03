@@ -181,51 +181,72 @@ class StockRepository:
         db.flush()
         return movement
 
+
     @staticmethod
     def decrement_stock_atomic(
         db: Session,
         product_id: int,
-        quantity: int
+        quantity: int,
+        require_active: bool = True,
     ) -> bool:
-        """D?cr?mente uniquement si le stock disponible est suffisant."""
+        conditions = [
+            Product.id == product_id,
+            Product.quantity >= quantity,
+        ]
+
+        if require_active:
+            conditions.append(Product.active.is_(True))
+
         result = db.execute(
             update(Product)
-            .where(
-                Product.id == product_id,
-                Product.quantity >= quantity
-            )
+            .where(*conditions)
             .values(quantity=Product.quantity - quantity)
         )
+
         return result.rowcount == 1
+
 
     @staticmethod
     def increment_stock_atomic(
         db: Session,
         product_id: int,
-        quantity: int
+        quantity: int,
+        require_active: bool = True,
     ) -> bool:
-        """Incr?mente le stock du produit si celui-ci existe."""
+        conditions = [Product.id == product_id]
+
+        if require_active:
+            conditions.append(Product.active.is_(True))
+
         result = db.execute(
             update(Product)
-            .where(Product.id == product_id)
+            .where(*conditions)
             .values(quantity=Product.quantity + quantity)
         )
+
         return result.rowcount == 1
+
 
     @staticmethod
     def adjust_stock_atomic(
         db: Session,
         product_id: int,
         expected_quantity: int,
-        new_quantity: int
+        new_quantity: int,
+        require_active: bool = True,
     ) -> bool:
-        """Ajuste le stock seulement si sa valeur n'a pas chang?."""
+        conditions = [
+            Product.id == product_id,
+            Product.quantity == expected_quantity,
+        ]
+
+        if require_active:
+            conditions.append(Product.active.is_(True))
+
         result = db.execute(
             update(Product)
-            .where(
-                Product.id == product_id,
-                Product.quantity == expected_quantity
-            )
+            .where(*conditions)
             .values(quantity=new_quantity)
         )
+
         return result.rowcount == 1

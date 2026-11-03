@@ -209,6 +209,7 @@ class SaleService:
                     db,
                     item.product_id,
                     item.quantity,
+                    require_active=False,
                 )
 
                 if not stock_updated:

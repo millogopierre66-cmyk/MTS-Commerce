@@ -53,7 +53,6 @@ class ProductUpdate(BaseModel):
         ge=0
     )
 
-    active: bool | None = None
 
     model_config = ConfigDict(
         extra="forbid"

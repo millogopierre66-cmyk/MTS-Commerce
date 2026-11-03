@@ -18,13 +18,23 @@ from app.schemas.stock import StockIn, StockOut
 class StockService:
 
     @staticmethod
-    def _get_product(db: Session, product_id: int):
+    def _get_product(
+        db: Session,
+        product_id: int,
+        require_active: bool = False,
+    ):
         product = ProductRepository.get_by_id(db, product_id)
 
         if product is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Produit introuvable.",
+            )
+
+        if require_active and not product.active:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Le produit est desactive; operation interdite.",
             )
 
         return product
@@ -41,7 +51,7 @@ class StockService:
                 detail="La quantite doit etre superieure a zero.",
             )
 
-        StockService._get_product(db, data.product_id)
+        StockService._get_product(db, data.product_id, require_active=True)
 
         try:
             updated = StockRepository.increment_stock_atomic(
@@ -86,7 +96,7 @@ class StockService:
                 detail="La quantite doit etre superieure a zero.",
             )
 
-        product = StockService._get_product(db, data.product_id)
+        product = StockService._get_product(db, data.product_id, require_active=True)
 
         if product.quantity < data.quantity:
             raise HTTPException(
@@ -142,7 +152,9 @@ class StockService:
                 detail="La quantite ne peut pas etre negative.",
             )
 
-        product = StockService._get_product(db, product_id)
+        product = StockService._get_product(
+            db, product_id, require_active=True
+        )
 
         old_quantity = product.quantity
         difference = quantity - old_quantity

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -12,82 +12,89 @@ class Product(Base):
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
-        index=True
+        index=True,
     )
 
     reference: Mapped[str] = mapped_column(
         String(50),
         unique=True,
-        nullable=False
+        nullable=False,
     )
 
     barcode: Mapped[str] = mapped_column(
         String(100),
         unique=True,
-        nullable=False
+        nullable=False,
     )
 
     name: Mapped[str] = mapped_column(
         String(200),
-        nullable=False
+        nullable=False,
     )
 
     description: Mapped[str] = mapped_column(
         String(500),
-        default=""
+        default="",
     )
 
     category: Mapped[str] = mapped_column(
         String(100),
-        nullable=False
+        nullable=False,
     )
 
     purchase_price: Mapped[float] = mapped_column(
         Float,
-        nullable=False
+        nullable=False,
     )
 
     selling_price: Mapped[float] = mapped_column(
         Float,
-        nullable=False
+        nullable=False,
     )
 
     quantity: Mapped[int] = mapped_column(
         Integer,
-        default=0
+        default=0,
     )
 
-    # AJOUT IMPORTANT
     alert_stock: Mapped[int] = mapped_column(
         Integer,
         default=5,
-        nullable=False
+        nullable=False,
     )
 
     minimum_stock: Mapped[float] = mapped_column(
         Float,
         default=5,
-        nullable=False
+        nullable=False,
     )
 
     active: Mapped[bool] = mapped_column(
         Boolean,
-        default=True
+        default=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(UTC).replace(tzinfo=None)
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None)
+        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
 
     movements = relationship(
         "StockMovement",
         back_populates="product",
-        cascade="all, delete"
+        passive_deletes="all",
+    )
+
+
+@event.listens_for(Product, "before_delete")
+def prevent_physical_product_deletion(mapper, connection, target):
+    raise RuntimeError(
+        "Suppression physique des produits interdite; "
+        "utiliser la desactivation logique."
     )
