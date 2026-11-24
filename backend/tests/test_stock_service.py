@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi import HTTPException
 
 from app.models.user import User
@@ -194,3 +194,70 @@ def test_stock_in_rolls_back_if_movement_creation_fails(db, monkeypatch):
 
     assert db.get(Product, produit.id).quantity == 10
     assert mouvements_produit(db, produit.id) == []
+
+def test_adjust_stock_records_positive_difference(db):
+    utilisateur = creer_utilisateur(db)
+    produit = creer_produit(db, "ADJUST-UP", stock=10)
+
+    mouvement = StockService.adjust_stock(
+        db,
+        product_id=produit.id,
+        quantity=15,
+        current_user=utilisateur,
+    )
+
+    db.expire_all()
+
+    assert db.get(Product, produit.id).quantity == 15
+
+    mouvements = mouvements_produit(db, produit.id)
+
+    assert len(mouvements) == 1
+    assert mouvement.movement_type == "ADJUSTMENT"
+    assert mouvement.quantity == 5
+    assert mouvement.user_id == utilisateur.id
+
+
+def test_adjust_stock_rejects_identical_quantity_without_changes(db):
+    utilisateur = creer_utilisateur(db)
+    produit = creer_produit(db, "ADJUST-ZERO", stock=10)
+
+    with pytest.raises(HTTPException) as exc:
+        StockService.adjust_stock(
+            db,
+            product_id=produit.id,
+            quantity=10,
+            current_user=utilisateur,
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == (
+        "La quantite est identique au stock actuel."
+    )
+
+    db.expire_all()
+
+    assert db.get(Product, produit.id).quantity == 10
+    assert mouvements_produit(db, produit.id) == []
+
+def test_adjust_stock_records_negative_difference(db):
+    utilisateur = creer_utilisateur(db)
+    produit = creer_produit(db, "ADJUST-DOWN", stock=15)
+
+    mouvement = StockService.adjust_stock(
+        db,
+        product_id=produit.id,
+        quantity=10,
+        current_user=utilisateur,
+    )
+
+    db.expire_all()
+
+    assert db.get(Product, produit.id).quantity == 10
+
+    mouvements = mouvements_produit(db, produit.id)
+
+    assert len(mouvements) == 1
+    assert mouvement.movement_type == "ADJUSTMENT"
+    assert mouvement.quantity == -5
+    assert mouvement.user_id == utilisateur.id
