@@ -36,6 +36,47 @@ class ProductRepository:
         )
 
     @staticmethod
+    def search_active(
+        db: Session,
+        q: str | None = None,
+        category: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        from sqlalchemy import or_
+
+        query = db.query(Product).filter(
+            Product.active.is_(True)
+        )
+
+        if q:
+            pattern = f"%{q}%"
+            query = query.filter(
+                or_(
+                    Product.name.ilike(pattern),
+                    Product.reference.ilike(pattern),
+                    Product.barcode.ilike(pattern),
+                )
+            )
+
+        if category:
+            query = query.filter(
+                Product.category.ilike(category)
+            )
+
+        total = query.count()
+
+        items = (
+            query
+            .order_by(Product.name.asc(), Product.id.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+
+        return items, total
+
+    @staticmethod
     def get_by_id(db: Session, product_id: int):
         return (
             db.query(Product)

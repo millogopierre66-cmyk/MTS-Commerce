@@ -54,6 +54,43 @@ class ProductService:
         return ProductRepository.get_active(db)
 
     @staticmethod
+    def get_catalogue(
+        db: Session,
+        q: str | None = None,
+        category: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        q = q.strip() if q and q.strip() else None
+        category = (
+            category.strip()
+            if category and category.strip()
+            else None
+        )
+
+        items, total = ProductRepository.search_active(
+            db=db,
+            q=q,
+            category=category,
+            page=page,
+            page_size=page_size,
+        )
+
+        total_pages = (
+            (total + page_size - 1) // page_size
+            if total
+            else 0
+        )
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+        }
+
+    @staticmethod
     def get_archived(db: Session):
         return ProductRepository.get_archived(db)
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database.session import SessionLocal
@@ -6,6 +6,7 @@ from app.schemas.product import (
     ProductCreate,
     ProductUpdate,
     ProductResponse,
+    ProductCatalogueResponse,
 )
 from app.services.product_service import ProductService
 from app.security.auth import (
@@ -61,6 +62,27 @@ def list_archived_products(
     current_user=Depends(get_current_admin),
 ):
     return ProductService.get_archived(db)
+
+
+@router.get(
+    "/catalogue",
+    response_model=ProductCatalogueResponse,
+)
+def search_products(
+    q: str | None = Query(default=None, max_length=200),
+    category: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return ProductService.get_catalogue(
+        db=db,
+        q=q,
+        category=category,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get(

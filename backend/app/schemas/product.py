@@ -67,3 +67,10 @@ class ProductResponse(ProductBase):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+class ProductCatalogueResponse(BaseModel):
+    items: list[ProductResponse]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+    total_pages: int = Field(ge=0)
